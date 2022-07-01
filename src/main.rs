@@ -1,12 +1,11 @@
 use std::{
     env,
     fs::{self, File},
-    io::{self, BufRead},
+    io::{self, BufRead, Write},
     path::Path,
     time::Duration,
     thread
 };
-use std::io::Write;
 use colour::{dark_red_ln, e_blue_ln, green_ln, red_ln};
 use sinner::Sin;
 use threadpool::ThreadPool;
@@ -23,7 +22,7 @@ fn valid_mail(mail: &str, password: &str, server: &str, port: u16) -> imap::erro
     Ok(Some("OK".to_string()))
 }
 
-fn main_worker(input: &String, output: &String, resume: bool) {
+async fn main_worker(input: &String, output: &String, resume: bool) {
     let input_path = Path::new(input);
     if !input_path.exists() {
         red_ln!("Input file does not exist");
@@ -34,7 +33,8 @@ fn main_worker(input: &String, output: &String, resume: bool) {
     let mut output_file = File::create(output_path)
         .expect("Failed to create Output file");
 
-    let mut invalid_file = File::create("invalid.txt")
+    let invalid_path = Path::new("invalid.txt");
+    let mut invalid_file = File::create(invalid_path)
         .expect("Failed to create Invalid file");
 
     let hosts: Sin<Vec<(String, String, u16)>> = Sin::new(init_hosts());
@@ -78,6 +78,8 @@ fn main_worker(input: &String, output: &String, resume: bool) {
                     if valid_mail(mail, password, &server, port).is_ok() {
                         green_ln!("Valid: {}", combo.trim());
                         valid.push(combo.to_owned());
+                        // fs::write(output_path, combo.to_owned().as_bytes())
+                        //     .expect("");
                     } else {
                         red_ln!("Invalid: {}", combo.trim());
                         invalid.push(combo.to_owned());
@@ -171,7 +173,7 @@ async fn main() {
     }
 
     let resume = !env::args().find(|p| p.eq("--resume")).is_none();
-    main_worker(input.unwrap(), output.unwrap(), resume);
+    main_worker(input.unwrap(), output.unwrap(), resume).await;
 }
 
 fn print_usage() {
