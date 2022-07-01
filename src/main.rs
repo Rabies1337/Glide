@@ -6,7 +6,8 @@ use std::{
     time::Duration,
     thread
 };
-use colored::Colorize;
+use std::io::Write;
+use colour::{dark_red_ln, e_blue_ln, green_ln, red_ln};
 use sinner::Sin;
 use threadpool::ThreadPool;
 
@@ -25,17 +26,20 @@ fn valid_mail(mail: &str, password: &str, server: &str, port: u16) -> imap::erro
 fn main_worker(input: &String, output: &String, resume: bool) {
     let input_path = Path::new(input);
     if !input_path.exists() {
-        println!("{}", "Input file does not exist".red());
+        red_ln!("Input file does not exist");
         return
     }
 
     let output_path = Path::new(output);
-    let output_file = File::create(output_path)
-        .expect("Failed to create Output file".red().trim());
+    let mut output_file = File::create(output_path)
+        .expect("Failed to create Output file");
+
+    let mut invalid_file = File::create("invalid.txt")
+        .expect("Failed to create Invalid file");
 
     let hosts: Sin<Vec<(String, String, u16)>> = Sin::new(init_hosts());
     if hosts.is_empty() {
-        println!("{}", "Hostがありません".red());
+        red_ln!("No Hosts");
         return
     }
 
@@ -49,7 +53,7 @@ fn main_worker(input: &String, output: &String, resume: bool) {
     let mut invalid: Sin<Vec<String>> = Sin::new(vec![]);
 
     if let Ok(lines) = read_lines(input_path) {
-        println!("Loaded combos: {}", read_lines(input_path).unwrap().count());
+        // println!("Loaded combos: {}", read_lines(input_path).unwrap().count());
 
         for (i, line) in lines.enumerate() {
             if i < start_line { continue }
@@ -64,7 +68,7 @@ fn main_worker(input: &String, output: &String, resume: bool) {
                         host.eq(mail_split.get(1).unwrap()))
                         .cloned().unwrap_or(("".to_string(), "".to_string(), 0));
                     if found.0.is_empty() {
-                        println!("Invalid host: {}", mail_split.get(1).unwrap());
+                        dark_red_ln!("Invalid host: {}", mail_split.get(1).unwrap());
                         // found = find_unknown_host(mail_split.get(1).unwrap()).unwrap();
                         invalid.push(combo);
                         return
@@ -72,11 +76,11 @@ fn main_worker(input: &String, output: &String, resume: bool) {
 
                     let (_, server, port) = found;
                     if valid_mail(mail, password, &server, port).is_ok() {
-                        println!("{}", format!("Valid: {}", combo).green());
-                        valid.push(combo);
+                        green_ln!("Valid: {}", combo.trim());
+                        valid.push(combo.to_owned());
                     } else {
-                        println!("{}", format!("Invalid: {}", combo).bright_red());
-                        invalid.push(combo);
+                        red_ln!("Invalid: {}", combo.trim());
+                        invalid.push(combo.to_owned());
                     }
                 });
             }
@@ -86,7 +90,16 @@ fn main_worker(input: &String, output: &String, resume: bool) {
     }
 
     loop { if pool.active_count() <= 0 { break } }
-    println!("Valid: {}, Invalid: {}", valid.len(), invalid.len());
+    e_blue_ln!("Finish!");
+    e_blue_ln!("Valid: {}, Invalid: {}", valid.len(), invalid.len());
+    valid.iter().enumerate().for_each(|(_, combo)| {
+        output_file.write_all(format!("{}\n", combo).as_bytes())
+            .expect("ファイルの書き込みに失敗しました");
+    });
+    invalid.iter().enumerate().for_each(|(_, combo)| {
+        invalid_file.write_all(format!("{}\n", combo).as_bytes())
+            .expect("ファイルの書き込みに失敗しました")
+    });
 }
 
 fn find_last_line() -> usize {
@@ -145,14 +158,14 @@ async fn main() {
 
     let input = args_c.get(1);
     if input.is_none() {
-        println!("{}", "No input".red());
+        red_ln!("No input");
         print_usage();
         return
     }
 
     let output = args_c.get(2);
     if output.is_none() {
-        println!("{}", "No output".red());
+        red_ln!("No output");
         print_usage();
         return
     }
